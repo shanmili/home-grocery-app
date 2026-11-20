@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+.npm-cache/
+.qodo/
+dist/
+.env
+.env.*
+!.env.example
+npm-debug.log*

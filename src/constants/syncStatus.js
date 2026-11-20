@@ -1,0 +1,5 @@
+export const SYNC_STATUS = {
+  PENDING: 'PENDING',
+  SYNCED: 'SYNCED',
+  FAILED: 'FAILED',
+};

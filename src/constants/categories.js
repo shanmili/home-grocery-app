@@ -1,0 +1,15 @@
+export const PRODUCT_CATEGORIES = [
+  'Rice and grains',
+  'Kitchen essentials',
+  'Canned goods',
+  'Instant food',
+  'Frozen goods',
+  'Vegetables',
+  'Beverages',
+  'Snacks',
+  'Condiments',
+  'Personal care',
+  'Medicine',
+  'Cleaning supplies',
+  'Other household essentials',
+];

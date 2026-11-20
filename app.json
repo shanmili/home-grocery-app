@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Home Grocery Inventory",
+    "slug": "home-grocery-inventory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#FDF6E5"
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.shanmi.homegroceryinventory"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "026f4b13-68bd-4b37-b181-eff9b7d4fa8a"
+      }
+    },
+    "icon": "./assets/icon.png"
+  }
+}
