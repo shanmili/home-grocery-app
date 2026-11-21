@@ -2,9 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
-  Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -17,6 +15,7 @@ import CollapsibleGroup from '../../components/common/CollapsibleGroup';
 import { addCustomCategory, getCustomCategories } from '../../db/repositories/categoriesRepo';
 import UnitDropdown from '../../components/common/UnitDropdown';
 import CategoryLink from '../../components/common/CategoryLink';
+import FormModal from '../../components/common/FormModal';
 import ExpirationDateField from '../../components/common/ExpirationDateField';
 import LoadingScreen from '../../components/common/LoadingScreen';
 import ScreenShell from '../../components/common/ScreenShell';
@@ -34,6 +33,7 @@ import {
   archiveProduct,
   createProduct,
   getActiveProducts,
+  returnProductUse,
   updateProduct,
 } from '../../db/repositories/productsRepo';
 import { validateNonNegativeNumber, validateRequiredString } from '../../utils/validators';
@@ -45,11 +45,11 @@ const initialFormState = {
   piecesPerPack: '',
   loosePieces: '0',
   unit: '',
-  minThreshold: '0',
+  minThreshold: '',
   expirationDate: '',
 };
 
-function ProductRow({ item, isAdmin, onDecrease, onIncrease, onEdit, onArchive }) {
+function ProductRow({ item, isAdmin, onDecrease, onIncrease, onReturn, onEdit, onArchive }) {
   const quantityUnit = item.pieces_per_pack ? 'pc/s' : item.unit;
   const notice = item.quantity > 0 ? expirationNotice(item.expiration_date) : null;
   const status = stockStatus(item.quantity);
@@ -57,13 +57,13 @@ function ProductRow({ item, isAdmin, onDecrease, onIncrease, onEdit, onArchive }
 
   return (
     <View style={styles.productRow}>
-      <View style={styles.productTextWrap}>
+      <View>
         <Text style={styles.productName}>{item.name}</Text>
         <Text style={[styles.productMeta, status !== 'in-stock' && styles.lowText]}>
           {item.quantity} {quantityUnit}  · {stockLabel}
         </Text>
         <Text style={styles.categoryMeta}>
-          {item.category} • Restock target {item.min_threshold} {quantityUnit}
+          {item.category}{item.min_threshold > 0 ? ' · Restock target ' + item.min_threshold + ' ' + quantityUnit : ''}
         </Text>
         {item.expiration_date ? (
           <Text style={[styles.categoryMeta, notice && styles.lowText]}>
@@ -73,24 +73,25 @@ function ProductRow({ item, isAdmin, onDecrease, onIncrease, onEdit, onArchive }
       </View>
 
       <View style={styles.adjustWrap}>
-        <Pressable style={styles.minusButton} onPress={() => onDecrease(item.id)}>
-          <Text style={styles.minusLabel}>-</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={'Use one ' + item.name}
+          disabled={item.quantity <= 0} style={[styles.minusButton, item.quantity <= 0 && styles.disabled]}
+          onPress={() => onDecrease(item.id)}>
+          <Text style={styles.minusLabel}>−</Text>
         </Pressable>
-        <Pressable
-          style={[styles.plusButton, !isAdmin && styles.plusButtonDisabled]}
-          onPress={() => onIncrease(item.id)}
-          disabled={!isAdmin}
-        >
-          <Text style={[styles.plusLabel, !isAdmin && styles.plusLabelDisabled]}>+</Text>
-        </Pressable>
-        {isAdmin ? (
-          <Pressable style={styles.actionButton} onPress={() => onEdit(item)}>
+        {isAdmin ? (<>
+          <Pressable accessibilityRole="button" accessibilityLabel={'Add one ' + item.name}
+            style={styles.plusButton} onPress={() => onIncrease(item.id)}>
+            <Text style={styles.plusLabel}>+</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={styles.actionButton} onPress={() => onEdit(item)}>
             <Text style={styles.actionButtonLabel}>Edit</Text>
           </Pressable>
-        ) : null}
-        {isAdmin ? (
-          <Pressable style={styles.archiveButton} onPress={() => onArchive(item.id)}>
+          <Pressable accessibilityRole="button" style={styles.archiveButton} onPress={() => onArchive(item.id)}>
             <Text style={styles.archiveButtonLabel}>Archive</Text>
+          </Pressable>
+        </>) : item.return_use_id ? (
+          <Pressable accessibilityRole="button" style={styles.actionButton} onPress={() => onReturn(item)}>
+            <Text style={styles.actionButtonLabel}>Return last use</Text>
           </Pressable>
         ) : null}
       </View>
@@ -105,6 +106,7 @@ export default function InventoryListScreen({ navigation, route }) {
   const { revision } = useGrocerySync();
   const { currentUser } = useSession();
   const isAdmin = currentUser?.role === 'ADMIN';
+  const returnActorId = currentUser?.role === 'MEMBER' ? currentUser.id : null;
   const [products, setProducts] = useState([]);
   const [customCategories, setCustomCategories] = useState([]);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
@@ -151,7 +153,7 @@ export default function InventoryListScreen({ navigation, route }) {
     if (!currentUser?.id) return undefined;
     let active = true;
     setLoading(true);
-    Promise.all([getActiveProducts(), getCustomCategories()])
+    Promise.all([getActiveProducts(returnActorId), getCustomCategories()])
       .then(([rows, names]) => {
         if (active) {
           setProducts(rows);
@@ -161,10 +163,10 @@ export default function InventoryListScreen({ navigation, route }) {
       .catch(() => { if (active) Alert.alert('Load failed', 'Unable to load local inventory data.'); })
       .finally(() => { if (active) { setLoading(false); setLoaded(true); } });
     return () => { active = false; };
-  }, [currentUser?.id, revision]));
+  }, [currentUser?.id, returnActorId, revision]));
 
   const refreshProducts = async () => {
-    const rows = await getActiveProducts();
+    const rows = await getActiveProducts(returnActorId);
     setProducts(rows);
   };
 
@@ -213,7 +215,7 @@ export default function InventoryListScreen({ navigation, route }) {
       expectedVersion: item.server_version,
       originalQuantity: item.quantity,
       unit: item.unit.toLowerCase() === 'packs' ? 'pack' : item.unit,
-      minThreshold: String(item.min_threshold),
+      minThreshold: item.min_threshold > 0 ? String(item.min_threshold) : '',
       expirationDate: item.expiration_date ?? '',
     });
     setFormVisible(true);
@@ -244,6 +246,9 @@ export default function InventoryListScreen({ navigation, route }) {
 
     const thresholdError = validateNonNegativeNumber(form.minThreshold, 'Restock target');
     if (thresholdError) return thresholdError;
+    if (form.unit === 'pack' && !Number.isSafeInteger(Number(form.minThreshold))) {
+      return 'Enter the restock target as a whole number of pieces.';
+    }
 
     if (form.expirationDate.trim() && !isValidExpirationDate(form.expirationDate.trim())) {
       return 'Choose a valid expiration date.';
@@ -322,7 +327,7 @@ export default function InventoryListScreen({ navigation, route }) {
 
   const handleDecrease = async (productId) => {
     try {
-      const result = await adjustProductQuantity(productId, -1, currentUser.id);
+      const result = await adjustProductQuantity(productId, -1, currentUser.id, currentUser.role);
       if (!result.changed) {
         Alert.alert('No change', 'Quantity is already zero.');
       }
@@ -339,11 +344,27 @@ export default function InventoryListScreen({ navigation, route }) {
     }
 
     try {
-      await adjustProductQuantity(productId, 1, currentUser.id);
+      await adjustProductQuantity(productId, 1, currentUser.id, currentUser.role);
       await refreshProducts();
     } catch (error) {
       Alert.alert('Update failed', 'Could not increase quantity.');
     }
+  };
+
+  const handleReturn = (item) => {
+    if (!returnActorId || !item.return_use_id) return;
+    const unit = item.pieces_per_pack ? 'pc/s' : item.unit;
+    Alert.alert('Return ' + item.name + '?', 'Put ' + item.return_quantity + ' ' + unit + ' back in stock?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Return', onPress: async () => {
+        try {
+          await returnProductUse(item.id, item.return_use_id, returnActorId);
+          await refreshProducts();
+        } catch (error) {
+          Alert.alert('Return unavailable', error.message || 'Could not return this item.');
+        }
+      } },
+    ]);
   };
 
   if (loading && !loaded) return <LoadingScreen message="Loading inventory…" />;
@@ -355,33 +376,37 @@ export default function InventoryListScreen({ navigation, route }) {
           title={category ?? title}
           subtitle={stockFilter === 'low' ? 'More than 0 and up to 2 left.' : undefined}
         >
-          <TextInput
-            value={searchText}
-            onChangeText={setSearchText}
-            placeholder="Search by name, category, or unit"
-            placeholderTextColor={colors.textSecondary}
-            style={styles.searchInput}
-          />
-
-          {isAdmin && !stockFilter ? (
-            <Pressable style={styles.addButton} onPress={openCreateModal}>
-              <Text style={styles.addButtonLabel}>+ Add product</Text>
-            </Pressable>
-          ) : null}
-
-          {isAdmin && !stockFilter && !category ? (
-            <Pressable style={styles.addButton} onPress={() => { setCategoryName(''); setCategoryModalVisible(true); }}>
-              <Text style={styles.addButtonLabel}>+ Add category</Text>
-            </Pressable>
-          ) : null}
-
-          {loading ? <LoadingScreen compact message="Refreshing inventory…" /> : null}
-
           <FlatList
+            automaticallyAdjustKeyboardInsets
+            keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
             persistentScrollbar
             indicatorStyle="black"
             data={category ? visibleProducts : categories}
+            ListHeaderComponent={<>
+              <TextInput
+                value={searchText}
+                accessibilityLabel="Search inventory"
+                onChangeText={setSearchText}
+                placeholder="Search by name, category, or unit"
+                placeholderTextColor={colors.textSecondary}
+                style={styles.searchInput}
+              />
+
+              {isAdmin && !stockFilter ? (
+                <Pressable style={styles.addButton} onPress={openCreateModal}>
+                  <Text style={styles.addButtonLabel}>+ Add product</Text>
+                </Pressable>
+              ) : null}
+
+              {isAdmin && !stockFilter && !category ? (
+                <Pressable style={styles.addButton} onPress={() => { setCategoryName(''); setCategoryModalVisible(true); }}>
+                  <Text style={styles.addButtonLabel}>+ Add category</Text>
+                </Pressable>
+              ) : null}
+
+              {loading ? <LoadingScreen compact message="Refreshing inventory…" /> : null}
+            </>}
             keyExtractor={(item) => category ? item.id : item.title}
             ItemSeparatorComponent={() => <View style={styles.categorySpacing} />}
             renderItem={({ item }) => {
@@ -392,6 +417,7 @@ export default function InventoryListScreen({ navigation, route }) {
                   isAdmin={isAdmin}
                   onDecrease={handleDecrease}
                   onIncrease={handleIncrease}
+                  onReturn={handleReturn}
                   onEdit={openEditModal}
                   onArchive={handleArchive}
                 />
@@ -419,142 +445,135 @@ export default function InventoryListScreen({ navigation, route }) {
         </SectionCard>
       </View>
 
-      <Modal visible={categoryModalVisible} transparent animationType="slide" onRequestClose={() => setCategoryModalVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add category</Text>
-            <TextInput
-              accessibilityLabel="Category name"
-              value={categoryName}
-              onChangeText={setCategoryName}
-              placeholder="Category name"
-              maxLength={60}
-              style={styles.input}
-            />
-            <Pressable disabled={savingCategory} style={styles.addButton} onPress={saveCategory}>
-              <Text style={styles.addButtonLabel}>{savingCategory ? 'Saving...' : 'Save category'}</Text>
-            </Pressable>
-            <Pressable disabled={savingCategory} style={styles.addButton} onPress={() => setCategoryModalVisible(false)}>
-              <Text style={styles.addButtonLabel}>Cancel</Text>
-            </Pressable>
-          </View>
+      <FormModal visible={categoryModalVisible} onClose={() => setCategoryModalVisible(false)}>
+        <Text style={styles.modalTitle}>Add category</Text>
+        <TextInput
+          accessibilityLabel="Category name"
+          value={categoryName}
+          onChangeText={setCategoryName}
+          placeholder="Category name"
+          maxLength={60}
+          style={styles.input}
+        />
+        <Pressable disabled={savingCategory} style={styles.addButton} onPress={saveCategory}>
+          <Text style={styles.addButtonLabel}>{savingCategory ? 'Saving...' : 'Save category'}</Text>
+        </Pressable>
+        <Pressable disabled={savingCategory} style={styles.addButton} onPress={() => setCategoryModalVisible(false)}>
+          <Text style={styles.addButtonLabel}>Cancel</Text>
+        </Pressable>
+      </FormModal>
+
+      <FormModal visible={formVisible} onClose={() => setFormVisible(false)}>
+        <Text style={styles.modalTitle}>{editingProductId ? 'Edit product' : 'Add product'}</Text>
+
+        <TextInput
+          value={form.name}
+          onChangeText={(text) => {
+            setShowSuggestions(true);
+            setForm((prev) => ({ ...prev, name: text }));
+          }}
+          accessibilityLabel="Product name"
+          placeholder={editingProductId ? 'Product name' : 'Search groceries or type a new name'}
+          style={styles.input}
+        />
+
+        {catalogMatches.map(({ name, category, unit }) => (
+          <Pressable
+            key={name}
+            accessibilityRole="button"
+            style={styles.catalogOption}
+            onPress={() => {
+              setShowSuggestions(false);
+              setForm((prev) => ({
+                ...prev, name, category, unit,
+                expirationDate: prev.expirationDate || (name === 'Frozen Fish' ? frozenFishReminderDate() : ''),
+              }));
+            }}
+          >
+            <Text style={styles.inputLabel}>{name} · {category}</Text>
+          </Pressable>
+        ))}
+
+        <Text style={styles.inputLabel}>Category</Text>
+        <View style={styles.chipsWrap}>
+          {categoryOptions.map((category) => {
+            const selected = form.category === category;
+            return (
+              <Pressable
+                key={category}
+                style={[styles.categoryChip, selected && styles.categoryChipSelected]}
+                onPress={() => setForm((prev) => ({ ...prev, category }))}
+              >
+                <Text style={[styles.categoryChipLabel, selected && styles.categoryChipLabelSelected]}>
+                  {category}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
-      </Modal>
 
-      <Modal visible={formVisible} transparent animationType="slide" onRequestClose={() => setFormVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <ScrollView style={styles.modalCard} keyboardShouldPersistTaps="handled" persistentScrollbar>
-            <Text style={styles.modalTitle}>{editingProductId ? 'Edit product' : 'Add product'}</Text>
+        <UnitDropdown value={form.unit} onChange={(unit) => setForm((prev) => ({ ...prev, unit }))} />
 
-            <TextInput
-              value={form.name}
-              onChangeText={(text) => {
-                setShowSuggestions(true);
-                setForm((prev) => ({ ...prev, name: text }));
-              }}
-              accessibilityLabel="Product name"
-              placeholder={editingProductId ? 'Product name' : 'Search groceries or type a new name'}
-              style={styles.input}
-            />
+        <Text style={styles.inputLabel}>{form.unit === 'pack' ? 'Full packs remaining' : 'Quantity'}</Text>
+        <TextInput
+          value={form.quantity}
+          onChangeText={(quantity) => setForm((prev) => ({ ...prev, quantity }))}
+          keyboardType="numeric"
+          style={styles.input}
+        />
 
-            {catalogMatches.map(({ name, category, unit }) => (
-              <Pressable
-                key={name}
-                accessibilityRole="button"
-                style={styles.catalogOption}
-                onPress={() => {
-                  setShowSuggestions(false);
-                  setForm((prev) => ({
-                    ...prev, name, category, unit,
-                    expirationDate: prev.expirationDate || (name === 'Frozen Fish' ? frozenFishReminderDate() : ''),
-                  }));
-                }}
-              >
-                <Text style={styles.inputLabel}>{name} · {category}</Text>
-              </Pressable>
-            ))}
+        {form.unit === 'pack' ? (
+          <>
+            <Text style={styles.inputLabel}>Pieces per full pack</Text>
+            <TextInput value={form.piecesPerPack}
+              onChangeText={(piecesPerPack) => setForm((prev) => ({ ...prev, piecesPerPack }))}
+              keyboardType="number-pad" style={styles.input} />
+            <Text style={styles.inputLabel}>Loose pieces remaining</Text>
+            <TextInput value={form.loosePieces}
+              onChangeText={(loosePieces) => setForm((prev) => ({ ...prev, loosePieces }))}
+              keyboardType="number-pad" style={styles.input} />
+          </>
+        ) : null}
 
-            <Text style={styles.inputLabel}>Category</Text>
-            <View style={styles.chipsWrap}>
-              {categoryOptions.map((category) => {
-                const selected = form.category === category;
-                return (
-                  <Pressable
-                    key={category}
-                    style={[styles.categoryChip, selected && styles.categoryChipSelected]}
-                    onPress={() => setForm((prev) => ({ ...prev, category }))}
-                  >
-                    <Text style={[styles.categoryChipLabel, selected && styles.categoryChipLabelSelected]}>
-                      {category}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+        <Text style={styles.inputLabel}>Restock target{form.unit === 'pack' ? ' in pieces' : ''} (optional)</Text>
+        <TextInput
+          value={form.minThreshold}
+          onChangeText={(text) => setForm((prev) => ({ ...prev, minThreshold: text }))}
+          keyboardType="numeric"
+          accessibilityLabel="Restock target (optional)"
+          placeholder="Suggested amount to buy"
+          style={styles.input}
+        />
 
-            <UnitDropdown value={form.unit} onChange={(unit) => setForm((prev) => ({ ...prev, unit }))} />
+        {formVisible ? (
+          <ExpirationDateField
+            value={form.expirationDate}
+            onChange={(expirationDate) => setForm((prev) => ({ ...prev, expirationDate }))}
+          />
+        ) : null}
+        {form.category === 'Frozen goods' && /\bfish\b/i.test(form.name) ? (
+          <Pressable
+            accessibilityRole="button"
+            style={styles.catalogOption}
+            onPress={() => setForm((prev) => ({ ...prev, expirationDate: frozenFishReminderDate() }))}
+          >
+            <Text style={styles.inputLabel}>Set a 14-day frozen fish reminder</Text>
+          </Pressable>
+        ) : null}
 
-            <Text style={styles.inputLabel}>{form.unit === 'pack' ? 'Full packs remaining' : 'Quantity'}</Text>
-            <TextInput
-              value={form.quantity}
-              onChangeText={(quantity) => setForm((prev) => ({ ...prev, quantity }))}
-              keyboardType="numeric"
-              style={styles.input}
-            />
-
-            {form.unit === 'pack' ? (
-              <>
-                <Text style={styles.inputLabel}>Pieces per full pack</Text>
-                <TextInput value={form.piecesPerPack}
-                  onChangeText={(piecesPerPack) => setForm((prev) => ({ ...prev, piecesPerPack }))}
-                  keyboardType="number-pad" style={styles.input} />
-                <Text style={styles.inputLabel}>Loose pieces remaining</Text>
-                <TextInput value={form.loosePieces}
-                  onChangeText={(loosePieces) => setForm((prev) => ({ ...prev, loosePieces }))}
-                  keyboardType="number-pad" style={styles.input} />
-                <Text style={styles.inputLabel}>Restock target (pieces)</Text>
-              </>
-            ) : null}
-
-            <TextInput
-              value={form.minThreshold}
-              onChangeText={(text) => setForm((prev) => ({ ...prev, minThreshold: text }))}
-              keyboardType="numeric"
-              placeholder="Restock target"
-              style={styles.input}
-            />
-
-            {formVisible ? (
-              <ExpirationDateField
-                value={form.expirationDate}
-                onChange={(expirationDate) => setForm((prev) => ({ ...prev, expirationDate }))}
-              />
-            ) : null}
-            {form.category === 'Frozen goods' && /\bfish\b/i.test(form.name) ? (
-              <Pressable
-                accessibilityRole="button"
-                style={styles.catalogOption}
-                onPress={() => setForm((prev) => ({ ...prev, expirationDate: frozenFishReminderDate() }))}
-              >
-                <Text style={styles.inputLabel}>Set a 14-day frozen fish reminder</Text>
-              </Pressable>
-            ) : null}
-
-            <View style={styles.modalActions}>
-              <Pressable style={styles.cancelButton} onPress={() => setFormVisible(false)}>
-                <Text style={styles.cancelButtonLabel}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.saveButton, submitting && styles.saveButtonDisabled]}
-                onPress={handleSubmitForm}
-                disabled={submitting}
-              >
-                <Text style={styles.saveButtonLabel}>{submitting ? 'Saving...' : 'Save'}</Text>
-              </Pressable>
-            </View>
-          </ScrollView>
+        <View style={styles.modalActions}>
+          <Pressable style={styles.cancelButton} onPress={() => setFormVisible(false)}>
+            <Text style={styles.cancelButtonLabel}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.saveButton, submitting && styles.saveButtonDisabled]}
+            onPress={handleSubmitForm}
+            disabled={submitting}
+          >
+            <Text style={styles.saveButtonLabel}>{submitting ? 'Saving...' : 'Save'}</Text>
+          </Pressable>
         </View>
-      </Modal>
+      </FormModal>
     </ScreenShell>
   );
 }
@@ -562,7 +581,10 @@ export default function InventoryListScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    padding: spacing.lg,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 760,
+    padding: spacing.md,
   },
   listContent: { paddingBottom: spacing.xs },
   categorySpacing: { marginBottom: spacing.sm },
@@ -598,14 +620,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 14,
     padding: spacing.sm,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    gap: spacing.sm,
     backgroundColor: colors.input,
-  },
-  productTextWrap: {
-    flex: 1,
-    marginRight: spacing.md,
   },
   productName: {
     ...typography.body,
@@ -627,28 +643,27 @@ const styles = StyleSheet.create({
   },
   adjustWrap: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.xs,
     alignItems: 'center',
   },
   minusButton: {
-    width: 38,
-    height: 38,
+    minWidth: 44,
+    minHeight: 44,
     borderRadius: 10,
     backgroundColor: colors.surfaceAlt,
     justifyContent: 'center',
     alignItems: 'center',
   },
   plusButton: {
-    width: 38,
-    height: 38,
+    minWidth: 44,
+    minHeight: 44,
     borderRadius: 10,
     backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  plusButtonDisabled: {
-    backgroundColor: colors.surfaceAlt,
-  },
+  disabled: { opacity: 0.45 },
   minusLabel: {
     fontSize: 24,
     lineHeight: 26,
@@ -659,10 +674,10 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: '#FFFFFF',
   },
-  plusLabelDisabled: {
-    color: colors.textSecondary,
-  },
   actionButton: {
+    minHeight: 44,
+    maxWidth: '100%',
+    justifyContent: 'center',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.border,
@@ -676,6 +691,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   archiveButton: {
+    minHeight: 44,
+    maxWidth: '100%',
+    justifyContent: 'center',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.border,
@@ -688,22 +706,7 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontWeight: '700',
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
   catalogOption: { paddingVertical: spacing.sm },
-  modalCard: {
-    flexGrow: 0,
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-    maxHeight: '86%',
-  },
   modalTitle: {
     ...typography.heading,
     color: colors.textPrimary,
@@ -752,6 +755,7 @@ const styles = StyleSheet.create({
   },
   modalActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     gap: spacing.sm,
     marginTop: spacing.xs,

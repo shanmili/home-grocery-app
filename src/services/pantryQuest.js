@@ -50,9 +50,12 @@ export async function getPantryQuest(userId) {
   }
 
   const confirmed = new Set(profile?.recentLedger.map((entry) => entry.source_key));
-  const pendingAwards = (await getPendingSyncItems(db)).flatMap((row) => {
+  const pending = await getPendingSyncItems(db);
+  const returnedUses = new Set(pending.filter((row) => row.operation === 'return_usage')
+    .map((row) => JSON.parse(row.payload_json).payload.original_transaction_id));
+  const pendingAwards = pending.flatMap((row) => {
     const { actor, payload } = JSON.parse(row.payload_json);
-    if (actor !== userId || confirmed.has('inventory:' + row.transaction_id)) return [];
+    if (actor !== userId || returnedUses.has(row.transaction_id) || confirmed.has('inventory:' + row.transaction_id)) return [];
     const action = row.operation === 'add_shopping_item' ? 'SHOPPING_ITEM_ADDED'
       : row.operation === 'restock_product' ? 'STOCK_RESTOCKED'
       : row.operation === 'adjust_quantity' && payload.quest_intent === 'usage' && payload.delta < 0

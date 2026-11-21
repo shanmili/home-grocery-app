@@ -18,6 +18,7 @@ import { INVENTORY_ACTIONS } from '../../constants/actions';
 
 function toReadableAction(action) {
   if (action === INVENTORY_ACTIONS.QUANTITY_DECREASED) return 'decreased quantity';
+  if (action === INVENTORY_ACTIONS.STOCK_RETURNED) return 'returned stock';
   if (action === INVENTORY_ACTIONS.QUANTITY_INCREASED) return 'increased quantity';
   if (action === INVENTORY_ACTIONS.SHOPPING_MARKED_PURCHASED) return 'marked shopping item purchased';
   if (action === INVENTORY_ACTIONS.PRODUCT_CREATED) return 'added a product';

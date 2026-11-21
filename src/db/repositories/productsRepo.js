@@ -5,8 +5,19 @@ import { toIsoNow } from '../../utils/dateTime';
 import { INVENTORY_ACTIONS } from '../../constants/actions';
 import { recordGroceryChange } from './syncQueueRepo';
 
-export async function getActiveProducts() {
+export async function getActiveProducts(returnActorId = null) {
   const db = await getDatabase();
+  if (returnActorId) {
+    return db.getAllAsync(
+      `WITH uses AS (
+         SELECT *, row_number() OVER (PARTITION BY product_id ORDER BY julianday(occurred_at) DESC, sequence DESC) AS rank
+         FROM returnable_stock_uses WHERE user_id = ?
+       )
+       SELECT p.*, u.transaction_id AS return_use_id, u.amount AS return_quantity
+       FROM products p LEFT JOIN uses u ON u.product_id = p.id AND u.rank = 1
+       WHERE p.is_active = 1 ORDER BY p.name ASC;`, [returnActorId]
+    );
+  }
   return db.getAllAsync(
     'SELECT * FROM products WHERE is_active = 1 ORDER BY name ASC;'
   );
@@ -67,7 +78,7 @@ async function rejectDuplicate(tx, name, exceptId = null) {
 function productPayload(input) {
   return {
     name: input.name.trim(), category: input.category.trim(), unit: input.unit.trim(),
-    min_threshold: Number(input.minThreshold),
+    min_threshold: Number(input.minThreshold || 0),
     ...(input.piecesPerPack !== undefined ? { pieces_per_pack: input.piecesPerPack } : {}),
     ...(input.expirationDate !== undefined ? { expiration_date: input.expirationDate || null } : {}),
   };
@@ -154,27 +165,33 @@ export async function archiveProduct(productId, actorUserId) {
   });
 }
 
-export async function changeQuantity(tx, current, next, actor, {
-  dependsOn = null, action = null, questIntent = null,
-} = {}) {
-  const previous = Number(current.quantity);
-  const delta = next - previous;
+async function writeQuantity(tx, current, next, actor) {
   if (!Number.isFinite(next) || next < 0) throw new Error('Invalid quantity');
-  if (!delta) return false;
   await tx.runAsync(
     `UPDATE products SET quantity = ?, updated_at = ?, last_modified_by = ?,
       server_version = server_version + 1 WHERE id = ?;`,
     [next, toIsoNow(), actor, current.id]
   );
+}
+
+async function changeQuantity(tx, current, next, actor, { dependsOn = null, questIntent = null } = {}) {
+  const previous = Number(current.quantity);
+  const delta = next - previous;
+  if (delta === 0) return false;
+  await writeQuantity(tx, current, next, actor);
   await recordGroceryChange(tx, {
     actor, operation: 'adjust_quantity', entityId: current.id, productId: current.id,
     payload: { delta, ...(questIntent ? { quest_intent: questIntent } : {}) }, previous, next, dependsOn,
-    action: action || (delta < 0 ? INVENTORY_ACTIONS.QUANTITY_DECREASED : INVENTORY_ACTIONS.QUANTITY_INCREASED),
+    action: delta < 0 ? INVENTORY_ACTIONS.QUANTITY_DECREASED : INVENTORY_ACTIONS.QUANTITY_INCREASED,
+    metadata: questIntent === 'usage' && delta < 0 ? { usageUnit: current.pieces_per_pack ? 'pc/s' : current.unit } : null,
   });
   return true;
 }
 
-export async function adjustProductQuantity(productId, delta, actorUserId) {
+export async function adjustProductQuantity(productId, delta, actorUserId, actorRole) {
+  if (Number(delta) > 0 && actorRole !== 'ADMIN') {
+    throw new Error('Only admins can add stock. Use Return last use to put an item back.');
+  }
   const db = await getDatabase();
   let previousQuantity, newQuantity, changed;
   await db.withExclusiveTransactionAsync(async (tx) => {
@@ -184,5 +201,25 @@ export async function adjustProductQuantity(productId, delta, actorUserId) {
     changed = await changeQuantity(tx, current, newQuantity, actorUserId, { questIntent: 'usage' });
   });
   return { product: await findProductById(productId), previousQuantity, newQuantity, changed };
+}
+
+export async function returnProductUse(productId, originalId, actor) {
+  const db = await getDatabase();
+  await db.withExclusiveTransactionAsync(async (tx) => {
+    const current = await getCurrentProduct(tx, productId);
+    const use = await tx.getFirstAsync(
+      'SELECT amount, sync_status FROM returnable_stock_uses WHERE transaction_id = ? AND user_id = ? AND product_id = ?;',
+      [originalId, actor, productId]
+    );
+    if (!use) throw new Error('This stock use is no longer available to return.');
+    const next = current.quantity + use.amount;
+    await writeQuantity(tx, current, next, actor);
+    await recordGroceryChange(tx, {
+      actor, operation: 'return_usage', entityId: productId, productId, action: INVENTORY_ACTIONS.STOCK_RETURNED,
+      previous: current.quantity, next, payload: { original_transaction_id: originalId },
+      metadata: { originalTransactionId: originalId },
+      dependsOn: ['PENDING', 'FAILED'].includes(use.sync_status) ? originalId : null,
+    });
+  });
 }
 

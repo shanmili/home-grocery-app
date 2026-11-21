@@ -101,6 +101,8 @@ export async function applySnapshot(db, snapshot) {
           WHERE activity_logs.sync_status <> 'SYNCED'
              OR activity_logs.prev_quantity IS NOT excluded.prev_quantity
              OR activity_logs.new_quantity IS NOT excluded.new_quantity
+             OR (json_extract(excluded.metadata_json, '$.usageUnit') IS NOT NULL AND
+                 json_extract(activity_logs.metadata_json, '$.usageUnit') IS NOT json_extract(excluded.metadata_json, '$.usageUnit'))
              OR json_extract(activity_logs.metadata_json, '$.actorName') IS NULL;`,
         [entry.transaction_id, 'remote-' + entry.id, entry.transaction_id, entry.product_id, entry.user_id, entry.action,
           entry.prev_quantity === null ? null : Number(entry.prev_quantity),

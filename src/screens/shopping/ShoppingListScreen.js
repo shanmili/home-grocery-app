@@ -1,7 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +12,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { groupByProductCategory } from '../../constants/categoryGroups';
 import UnitDropdown from '../../components/common/UnitDropdown';
 import CollapsibleGroup from '../../components/common/CollapsibleGroup';
+import FormModal from '../../components/common/FormModal';
 import LoadingScreen from '../../components/common/LoadingScreen';
 import ScreenShell from '../../components/common/ScreenShell';
 import SectionCard from '../../components/common/SectionCard';
@@ -38,16 +38,19 @@ const manualInitial = {
 const purchaseInitial = {
   itemId: null,
   label: '',
-  quantity: '1',
+  quantity: '',
   unitPrice: '0',
 };
 
 function ShoppingItemRow({ item, isAdmin, onMarkPurchased }) {
   return (
     <View style={styles.itemRow}>
-      <Text style={styles.itemName}>
-        {item.label} • {item.requested_quantity} {item.display_unit ?? item.unit}
-      </Text>
+      <Text style={styles.itemName}>{item.product_name || item.label}</Text>
+      {item.suggested_quantity != null ? (
+        <Text style={styles.purchaseLabel}>
+          {item.product_id ? 'Suggested' : 'Requested'} {item.suggested_quantity} {item.display_unit ?? item.unit}
+        </Text>
+      ) : null}
 
       {isAdmin ? (
         <Pressable style={styles.purchaseButton} onPress={() => onMarkPurchased(item)}>
@@ -143,9 +146,9 @@ export default function ShoppingListScreen() {
   const openPurchaseModal = (item) => {
     setPurchaseForm({
       itemId: item.id,
-      label: item.label,
+      label: item.product_name || item.label,
       unit: item.display_unit ?? item.unit,
-      quantity: String(item.requested_quantity || 1),
+      quantity: item.suggested_quantity > 0 ? String(item.suggested_quantity) : '',
       unitPrice: '0',
     });
     setPurchaseVisible(true);
@@ -162,6 +165,11 @@ export default function ShoppingListScreen() {
     const quantityError = validateNonNegativeNumber(purchaseForm.quantity, 'Purchased quantity');
     if (quantityError) {
       Alert.alert('Invalid input', quantityError);
+      return;
+    }
+
+    if (Number(purchaseForm.quantity) <= 0) {
+      Alert.alert('Purchased quantity', 'Enter the amount you bought.');
       return;
     }
 
@@ -187,7 +195,7 @@ export default function ShoppingListScreen() {
       setPurchaseVisible(false);
       await loadShopping();
     } catch (error) {
-      Alert.alert('Purchase failed', 'Could not mark item as purchased.');
+      Alert.alert('Purchase failed', error.message || 'Could not mark item as purchased.');
     } finally {
       setSaving(false);
     }
@@ -248,93 +256,76 @@ export default function ShoppingListScreen() {
         </View>
       </ScrollView>
 
-      <Modal
-        visible={manualVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setManualVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add manual shopping item</Text>
-            <TextInput
-              value={manualForm.label}
-              onChangeText={(text) => setManualForm((prev) => ({ ...prev, label: text }))}
-              placeholder="Item label"
-              style={styles.input}
-            />
-            <View style={styles.inlineInputs}>
-              <TextInput
-                value={manualForm.requestedQuantity}
-                onChangeText={(text) => setManualForm((prev) => ({ ...prev, requestedQuantity: text }))}
-                keyboardType="numeric"
-                placeholder="Qty"
-                style={[styles.input, styles.halfInput]}
-              />
-            </View>
-            <UnitDropdown value={manualForm.unit}
-              onChange={(unit) => setManualForm((prev) => ({ ...prev, unit }))} />
+      <FormModal visible={manualVisible} onClose={() => setManualVisible(false)}>
+        <Text style={styles.modalTitle}>Add manual shopping item</Text>
+        <TextInput
+          value={manualForm.label}
+          onChangeText={(text) => setManualForm((prev) => ({ ...prev, label: text }))}
+          placeholder="Item label"
+          style={styles.input}
+        />
+        <Text style={styles.fieldLabel}>Requested quantity</Text>
+        <TextInput
+          value={manualForm.requestedQuantity}
+          onChangeText={(text) => setManualForm((prev) => ({ ...prev, requestedQuantity: text }))}
+          keyboardType="numeric"
+          placeholder="Qty"
+          style={styles.input}
+        />
+        <UnitDropdown value={manualForm.unit}
+          onChange={(unit) => setManualForm((prev) => ({ ...prev, unit }))} />
 
-            <View style={styles.modalActions}>
-              <Pressable style={styles.cancelButton} onPress={() => setManualVisible(false)}>
-                <Text style={styles.cancelLabel}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.saveButton, saving && styles.saveDisabled]}
-                onPress={saveManualItem}
-                disabled={saving}
-              >
-                <Text style={styles.saveLabel}>{saving ? 'Saving...' : 'Save'}</Text>
-              </Pressable>
-            </View>
-          </View>
+        <View style={styles.modalActions}>
+          <Pressable style={styles.cancelButton} onPress={() => setManualVisible(false)}>
+            <Text style={styles.cancelLabel}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.saveButton, saving && styles.saveDisabled]}
+            onPress={saveManualItem}
+            disabled={saving}
+          >
+            <Text style={styles.saveLabel}>{saving ? 'Saving...' : 'Save'}</Text>
+          </Pressable>
         </View>
-      </Modal>
+      </FormModal>
 
-      <Modal
-        visible={purchaseVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setPurchaseVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Confirm purchase</Text>
-            <Text style={styles.purchaseLabel}>{purchaseForm.label} ({purchaseForm.unit})</Text>
-            <View style={styles.inlineInputs}>
-              <TextInput
-                value={purchaseForm.quantity}
-                onChangeText={(text) => setPurchaseForm((prev) => ({ ...prev, quantity: text }))}
-                keyboardType="numeric"
-                placeholder="Purchased quantity"
-                style={[styles.input, styles.halfInput]}
-              />
-              <TextInput
-                value={purchaseForm.unitPrice}
-                onChangeText={(text) => setPurchaseForm((prev) => ({ ...prev, unitPrice: text }))}
-                keyboardType="decimal-pad"
-                placeholder="Unit price"
-                style={[styles.input, styles.halfInput]}
-              />
-            </View>
+      <FormModal visible={purchaseVisible} onClose={() => setPurchaseVisible(false)}>
+        <Text style={styles.modalTitle}>Confirm purchase</Text>
+        <Text style={styles.purchaseLabel}>{purchaseForm.label} ({purchaseForm.unit})</Text>
+        <Text style={styles.fieldLabel}>Purchased quantity</Text>
+        <TextInput
+          value={purchaseForm.quantity}
+          onChangeText={(text) => setPurchaseForm((prev) => ({ ...prev, quantity: text }))}
+          keyboardType="numeric"
+          accessibilityLabel="Purchased quantity"
+          placeholder="Enter the amount you bought"
+          style={styles.input}
+        />
+        <Text style={styles.fieldLabel}>Unit price</Text>
+        <TextInput
+          value={purchaseForm.unitPrice}
+          onChangeText={(text) => setPurchaseForm((prev) => ({ ...prev, unitPrice: text }))}
+          keyboardType="decimal-pad"
+          placeholder="Unit price"
+          accessibilityLabel="Unit price"
+          style={styles.input}
+        />
 
-            <Text style={styles.totalText}>Total cost: {purchaseTotal.toFixed(2)}</Text>
+        <Text style={styles.totalText}>Total cost: {purchaseTotal.toFixed(2)}</Text>
 
-            <View style={styles.modalActions}>
-              <Pressable style={styles.cancelButton} onPress={() => setPurchaseVisible(false)}>
-                <Text style={styles.cancelLabel}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.saveButton, saving && styles.saveDisabled]}
-                onPress={confirmPurchased}
-                disabled={saving}
-              >
-                <Text style={styles.saveLabel}>{saving ? 'Saving...' : 'Confirm'}</Text>
-              </Pressable>
-            </View>
-          </View>
+        <View style={styles.modalActions}>
+          <Pressable style={styles.cancelButton} onPress={() => setPurchaseVisible(false)}>
+            <Text style={styles.cancelLabel}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.saveButton, saving && styles.saveDisabled]}
+            onPress={confirmPurchased}
+            disabled={saving}
+          >
+            <Text style={styles.saveLabel}>{saving ? 'Saving...' : 'Confirm'}</Text>
+          </Pressable>
         </View>
-      </Modal>
+      </FormModal>
     </ScreenShell>
   );
 }
@@ -417,19 +408,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: spacing.xs,
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  modalCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    borderColor: colors.border,
-    borderWidth: 1,
-    padding: spacing.md,
-  },
+  fieldLabel: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.xs },
   modalTitle: {
     ...typography.heading,
     color: colors.textPrimary,
@@ -450,15 +429,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     backgroundColor: colors.input,
   },
-  inlineInputs: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  halfInput: {
-    flex: 1,
-  },
   modalActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     gap: spacing.sm,
   },

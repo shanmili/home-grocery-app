@@ -55,7 +55,7 @@ async function cycle(user) {
     if (dependsOn) {
       const prerequisite = await db.getFirstAsync('SELECT status FROM sync_queue WHERE id = ?;', [dependsOn]);
       if (prerequisite?.status !== 'SYNCED') {
-        if (prerequisite?.status === 'CONFLICT') await setSyncOutcome(row, 'CONFLICT', 'The related edit was rejected.');
+        if (prerequisite?.status === 'CONFLICT') await setSyncOutcome(row, 'CONFLICT', 'The original stock change was rejected.');
         continue;
       }
     }
@@ -69,6 +69,11 @@ async function cycle(user) {
           p_transaction_id: row.transaction_id, p_product_id: row.entity_id,
           p_quantity: payload.quantity, p_expected_version: payload.expected_version,
         });
+      } else if (row.operation === 'return_usage') {
+        await rpc(user.id, 'return_grocery_usage', {
+          p_transaction_id: row.transaction_id, p_product_id: row.entity_id,
+          p_original_transaction_id: payload.original_transaction_id,
+        });
       } else {
         await rpc(user.id, 'apply_grocery_change', {
           p_transaction_id: row.transaction_id, p_operation: row.operation,
@@ -77,7 +82,9 @@ async function cycle(user) {
       }
     } catch (error) {
       const conflict = conflictCodes.has(error.code);
-      await setSyncOutcome(row, conflict ? 'CONFLICT' : 'FAILED', error.message || 'Sync failed');
+      const needsReturnMigration = row.operation === 'return_usage' && ['PGRST202', '42883'].includes(error.code);
+      const message = needsReturnMigration ? 'Return saved on this phone. Family sync needs the stock returns migration.' : error.message;
+      await setSyncOutcome(row, conflict ? 'CONFLICT' : 'FAILED', message || 'Sync failed');
       if (!conflict) break;
       continue;
     }

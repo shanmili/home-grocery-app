@@ -68,6 +68,20 @@ After setup, writes are saved locally together with their transaction IDs. The a
 
 A signed-in user can keep making changes when the connection drops. A cold start with an expired Supabase session can still require connectivity to restore sign-in. Sync runs while the app is open.
 
+## Shopping targets and member returns
+
+The optional restock target suggests a purchase quantity when a product reaches zero. Set the target in the product's stock unit, or in individual pieces for a counted pack. Leave it blank to enter the quantity at purchase time. The admin can always change the suggested amount before confirming.
+
+In Inventory, a member can select **Return last use** on a product to put back their most recent unreturned deduction. A return records the original transaction and restores the amount that person took. Both actions can be saved offline. After sync, Pantry Quest reverses any award from the returned use.
+
+Apply `supabase/migrations/202611210001_grocery_usage_returns.sql` after the seven earlier migrations to enable returns across phones. Older app versions can still use the same inventory and shopping functions.
+
+To test ownership, retry handling, stock totals and the Pantry Quest reversal, run this against a migrated local test database with two configured test accounts. The SQL test rolls back its changes.
+
+```powershell
+psql -d your_test_database -v admin_id=YOUR_TEST_ADMIN_UUID -v member_id=YOUR_TEST_MEMBER_UUID -f supabase/tests/usage_returns.sql
+```
+
 ## Installable Android APK
 
 The EAS `preview` profile creates a standalone APK your family can open directly on Android. The package ID is `com.shanmi.homegroceryinventory`.

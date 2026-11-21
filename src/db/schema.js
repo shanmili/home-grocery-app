@@ -87,5 +87,20 @@ export async function initializeSchema() {
     shopping_json TEXT NOT NULL
   );`);
   await db.execAsync('CREATE INDEX IF NOT EXISTS activity_transaction_lookup ON activity_logs(transaction_id);');
+  await db.execAsync(`CREATE INDEX IF NOT EXISTS stock_return_original
+    ON activity_logs(json_extract(metadata_json, '$.originalTransactionId')) WHERE action = 'STOCK_RETURNED';`);
+  await db.execAsync(`CREATE VIEW IF NOT EXISTS returnable_stock_uses AS
+    SELECT a.transaction_id, a.user_id, a.product_id, a.occurred_at, a.rowid AS sequence,
+      a.prev_quantity - a.new_quantity AS amount, a.sync_status
+    FROM activity_logs a JOIN products p ON p.id = a.product_id AND p.is_active = 1
+    WHERE a.action = 'QUANTITY_DECREASED' AND a.prev_quantity > a.new_quantity
+      AND (a.sync_status IN ('PENDING', 'FAILED', 'SYNCED') OR
+        (a.sync_status = 'LOCAL_ONLY' AND NOT EXISTS (
+          SELECT 1 FROM inventory_setup WHERE key = 'shared-inventory-v1')))
+      AND json_extract(a.metadata_json, '$.usageUnit') =
+        CASE WHEN p.pieces_per_pack IS NOT NULL THEN 'pc/s' ELSE p.unit END
+      AND NOT EXISTS (SELECT 1 FROM activity_logs r WHERE r.action = 'STOCK_RETURNED'
+        AND json_extract(r.metadata_json, '$.originalTransactionId') = a.transaction_id
+        AND r.sync_status <> 'CONFLICT');`);
   await seedHouseholdProducts(db);
 }

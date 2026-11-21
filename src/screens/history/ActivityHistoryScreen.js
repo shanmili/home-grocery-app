@@ -16,6 +16,7 @@ import { useSession } from '../../state/sessionStore';
 
 function toReadableAction(action) {
   if (action === INVENTORY_ACTIONS.QUANTITY_DECREASED) return 'decreased quantity';
+  if (action === INVENTORY_ACTIONS.STOCK_RETURNED) return 'returned stock';
   if (action === INVENTORY_ACTIONS.QUANTITY_INCREASED) return 'increased quantity';
   if (action === INVENTORY_ACTIONS.PRODUCT_CREATED) return 'added a product';
   if (action === INVENTORY_ACTIONS.PRODUCT_UPDATED) return 'edited a product';

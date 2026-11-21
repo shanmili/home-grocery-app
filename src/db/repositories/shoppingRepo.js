@@ -1,4 +1,4 @@
-import { LOW_STOCK_LIMIT, TO_BUY_QUANTITY } from '../../constants/stockStatus';
+import { TO_BUY_QUANTITY } from '../../constants/stockStatus';
 import { getDatabase } from '../sqlite';
 import { generateId } from '../../utils/ids';
 import { toIsoNow } from '../../utils/dateTime';
@@ -12,7 +12,10 @@ export async function getOpenShoppingItems() {
   return db.getAllAsync(
     `SELECT
       s.*,
-      CASE WHEN p.pieces_per_pack IS NOT NULL THEN 'pc/s' ELSE s.unit END AS display_unit,
+      CASE WHEN s.product_id IS NULL THEN s.requested_quantity
+           WHEN p.pieces_per_pack IS NULL OR p.min_threshold = CAST(p.min_threshold AS INTEGER)
+           THEN NULLIF(p.min_threshold, 0) END AS suggested_quantity,
+      CASE WHEN p.pieces_per_pack IS NOT NULL THEN 'pc/s' ELSE coalesce(p.unit, s.unit) END AS display_unit,
       p.pieces_per_pack,
       p.name AS product_name,
       p.category AS product_category,
@@ -43,11 +46,6 @@ export async function syncAutoShoppingItems() {
       );
 
       if (!openItem) {
-        const suggestedQuantity = Math.max(
-          1,
-          Math.ceil(Math.max(LOW_STOCK_LIMIT + 1, Number(product.min_threshold)) - Number(product.quantity))
-        );
-
         await tx.runAsync(
           `INSERT INTO shopping_list (
             id, product_id, label, requested_quantity, unit,
@@ -57,7 +55,7 @@ export async function syncAutoShoppingItems() {
             generateId('shop'),
             product.id,
             product.name,
-            suggestedQuantity,
+            product.min_threshold,
             product.pieces_per_pack ? 'pc/s' : product.unit,
             now,
             now,

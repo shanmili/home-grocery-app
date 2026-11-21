@@ -39,6 +39,7 @@ export default function LoginScreen() {
     <ScreenShell>
       <ScrollView
         contentContainerStyle={styles.container}
+        automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
         persistentScrollbar
@@ -89,7 +90,7 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: spacing.lg, gap: spacing.sm },
+  container: { alignSelf: 'center', width: '100%', maxWidth: 560, padding: spacing.lg, gap: spacing.sm },
   title: { ...typography.title, color: colors.textPrimary },
   subtitle: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.sm },
   input: {

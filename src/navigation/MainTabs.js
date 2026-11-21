@@ -25,6 +25,7 @@ export default function MainTabs() {
         headerShadowVisible: false,
         headerRight: () => <NotificationBell navigation={navigation} />,
         tabBarLabelPosition: 'below-icon',
+        tabBarHideOnKeyboard: true,
         tabBarIcon: ({ color }) => <TabIcon name={route.name} color={color} />,
         tabBarActiveTintColor: colors.primaryDark,
         tabBarInactiveTintColor: colors.textSecondary,
